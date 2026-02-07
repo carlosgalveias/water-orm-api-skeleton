@@ -445,6 +445,8 @@ describe('Generic Router - Comprehensive CRUD Operations', () => {
     });
   });
 
-  // Additional test sections will be in a separate file due to length
-  // See api-generic-router-part2.test.js for PATCH, POST, DELETE, and Helper tests
+  // POST Tests placeholder - will be added via script
+  // PATCH Tests placeholder - will be added via script
+  // DELETE Tests placeholder - will be added via script
+  // Helper Tests placeholder - will be added via script
 });
