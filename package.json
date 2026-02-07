@@ -1,0 +1,37 @@
+{
+  "name": "worm_api",
+  "version": "1.0.0",
+  "description": "",
+  "license": "UNLICENSED",
+  "author": "Carlos Galveias",
+  "type": "commonjs",
+  "main": "api/api.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "local": "node api/local.js",
+    "test": "set RUNNING_TESTS && node --test",
+    "test:coverage": "set RUNNING_TESTS=true && node --test --experimental-test-coverage --test-coverage-include=utils/** --test-coverage-include=controllers/** --test-coverage-include=routers/** --test-coverage-include=api/** --test-coverage-include=models/** --test-coverage-include=config/** --test-coverage-exclude=tests/** --test-coverage-exclude=node_modules/**",
+    "test:coverage:html": "set RUNNING_TESTS && node --test --experimental-test-coverage --test-coverage-include=utils/** --test-coverage-include=controllers/** --test-coverage-include=routers/** --test-coverage-include=api/** --test-coverage-include=models/** --test-coverage-include=config/** --test-coverage-exclude=tests/** --test-coverage-exclude=node_modules/** > coverage-report.txt",
+    "test:watch": "set RUNNING_TESTS && node --test --watch",
+    "test:unit": "set RUNNING_TESTS && node --test tests/unit/**/*.test.js",
+    "test:unit:coverage": "set RUNNING_TESTS && node --test --experimental-test-coverage --test-coverage-include=utils/** --test-coverage-include=controllers/** --test-coverage-include=routers/** --test-coverage-include=api/** --test-coverage-include=models/** --test-coverage-include=config/** tests/unit/**/*.test.js",
+    "test:integration": "set RUNNING_TESTS && node --test tests/integration/**/*.test.js",
+    "test:integration:coverage": "set RUNNING_TESTS && node --test --experimental-test-coverage --test-coverage-include=utils/** --test-coverage-include=controllers/** --test-coverage-include=routers/** --test-coverage-include=api/** --test-coverage-include=models/** --test-coverage-include=config/** tests/integration/**/*.test.js",
+    "start": "node api/local.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.4",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "ioredis": "^5.9.2",
+    "jsonwebtoken": "^9.0.3",
+    "object-sizeof": "^2.6.5",
+    "pluralize": "^8.0.0",
+    "water-orm": "^0.0.7"
+  },
+  "overrides": {
+    "underscore": "^1.12.1"
+  }
+}
