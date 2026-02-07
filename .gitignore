@@ -13,6 +13,7 @@ node_modules/
 
 # Plans
 plans/
+plans/*
 
 # Test coverage
 coverage/
