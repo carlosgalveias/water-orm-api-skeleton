@@ -801,8 +801,7 @@ const auth = {
             return session.buildToken(user).then(async (result) => {
               const response = {
                 user: removeSensibleData(user.data),
-                token: result.token,
-                key: result.key,
+                token: result.token
               };
               req.userInfo = response.user;
               // here we get the earth position in the current minute and md5 it (as a hash)

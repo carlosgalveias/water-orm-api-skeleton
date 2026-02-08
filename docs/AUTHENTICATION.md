@@ -587,7 +587,6 @@ const session = await db.sessions.findOne({
 
 **Implementation**: [`utils/util-session.js`](utils/util-session.js:1)
 
-```javascript
 async function buildToken(user) {
   // 1. Create JWT payload
   const payload = {
@@ -628,7 +627,9 @@ async function buildToken(user) {
   // 6. Cache locally
   LocalCache.set(`session_${user.id}`, { token, user, expiry: expiryDate });
   
-  return { token, key: 'encryption-key' };
+  // 7. Return only the token (no key field)
+  return { token };
+}
 }
 ```
 
@@ -760,45 +761,271 @@ if (isBlacklisted) {
 ```
 
 ---
-
 ## Response Encryption
 
 ### GMST-Based Encryption
 
-**Implementation**: [`utils/util-encryption.js`](utils/util-encryption.js:9)
+**Implementation**: [`utils/util-encryption.js`](utils/util-encryption.js:47)
 
-The sign-in response is encrypted using a time-based key derived from Greenwich Mean Sidereal Time (GMST):
+The sign-in response is encrypted using AES-256-GCM with a time-based key derived from Greenwich Mean Sidereal Time (GMST).
+
+#### Response Structure
+
+The login endpoint returns an **encrypted response** with the following structure:
+
+```json
+{
+  "encrypted": "a1b2c3d4e5f6...hex-encoded-encrypted-data",
+  "iv": "1234567890abcdef...hex-encoded-initialization-vector",
+  "salt": "fedcba0987654321...hex-encoded-salt",
+  "authTag": "9876543210fedcba...hex-encoded-authentication-tag"
+}
+```
+
+**Outer Response Fields** (AES-256-GCM encryption):
+| Field | Type | Description |
+|-------|------|-------------|
+| `encrypted` | string (hex) | The encrypted data containing user and token |
+| `iv` | string (hex) | Initialization vector for AES-256-GCM decryption |
+| `salt` | string (hex) | Salt value used in the encryption process |
+| `authTag` | string (hex) | Authentication tag for GCM mode verification |
+
+**Decrypted Content** (after successful decryption):
+
+```json
+{
+  "user": {
+    "id": 1,
+    "email": "user@example.com",
+    "name": "John Doe",
+    "full_name": "John Doe",
+    "roles": 2,
+    "state": "active",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  },
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+**Inner Content Fields** (decrypted):
+| Field | Type | Description |
+|-------|------|-------------|
+| `user` | object | User object with password and sensitive fields removed |
+| `token` | string | JWT token for authenticating subsequent requests |
+
+**CRITICAL**: The decrypted response contains **only** `user` and `token` fields. There is **NO** `key` field included in the response.
+
+#### Encryption Implementation
+
+**Server-Side Encryption** ([`utils/util-auth.js`](utils/util-auth.js:801)):
 
 ```javascript
-// Generate time-based key
+// Step 1: Prepare response data (user and token ONLY - no key field)
+const response = {
+  user: removeSensibleData(user.data),
+  token: result.token
+};
+
+// Step 2: Get earth position in current minute as MD5 hash
+const control = encrypt.GMSTKey();
+
+// Step 3: Derive encryption key using SHA256
+const tempKey = await encrypt.sha256_hash('cantguessthis' + control);
+
+// Step 4: Encrypt the response using AES-256-GCM
+// Returns: {encrypted, iv, salt, authTag}
+const encryptedData = await encrypt.aes_256_gcm_encrypt(tempKey, response);
+
+// encryptedData structure returned to client:
+// {
+//   encrypted: "hex-encoded-encrypted-data",
+//   iv: "hex-encoded-initialization-vector",
+//   salt: "hex-encoded-salt",
+//   authTag: "hex-encoded-authentication-tag"
+// }
+```
+
+**Key Derivation Algorithm** ([`utils/util-encryption.js`](utils/util-encryption.js:33)):
+
+```javascript
+function getJulianDate() {
+  const now = new Date();
+  const utcMillis = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    now.getUTCHours(),
+    now.getUTCMinutes(),
+    now.getUTCSeconds(),
+    now.getUTCMilliseconds()
+  );
+  return utcMillis / 86400000 + 2440587.5;
+}
+
+function getGMST(jd) {
+  const T = (jd - 2451545.0) / 36525;
+  const theta0 = 280.46061837
+              + 360.98564736629 * (jd - 2451545.0)
+              + 0.000387933 * T * T
+              - (T * T * T) / 38710000.0;
+  
+  return ((theta0 % 360) + 360) % 360; // Normalize to [0,360]
+}
+
 function getGMSTKey() {
   const jd = getJulianDate();
   const gmst = getGMST(jd);
   
-  // Convert to 2-minute intervals
+  // Convert GMST to minutes and round to nearest 2-minute interval
+  const gmstMinutes = Math.round((gmst * 60 / 15) / 2) * 2;
+  
+  return gmstMinutes.toString(); // Returns earth position as string
+}
+```
+**Encryption Function** ([`utils/util-encryption.js`](utils/util-encryption.js:47)):
+
+```javascript
+async function aes_256_gcm_encrypt(password, input) {
+  // 1. Generate random IV and salt (never reuse IV with same key)
+  const iv = crypto.randomBytes(16);
+  const salt = crypto.randomBytes(16);
+
+  // 2. Derive secure key using Scrypt (async)
+  const key = await new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 32, (err, derivedKey) => {
+      if (err) reject(err);
+      else resolve(derivedKey);
+    });
+  });
+
+  // 3. Create cipher (GCM mode for authenticated encryption)
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  
+  let encrypted = '';
+  cipher.setEncoding('hex');
+
+  // 4. Stream encryption using pipeline
+  await pipeline(
+    Readable.from([input]),
+    cipher,
+    async function* (source) {
+      for await (const chunk of source) {
+        encrypted += chunk;
+      }
+    }
+  );
+
+  // 5. Get authentication tag for GCM integrity verification
+  const authTag = cipher.getAuthTag().toString('hex');
+
+  // Return all components needed for decryption
+  return {
+    encrypted,
+    iv: iv.toString('hex'),
+    salt: salt.toString('hex'),
+    authTag
+  };
+}
+```
+```
+
+#### Client-Side Decryption
+
+#### Client-Side Decryption
+
+Clients must implement the same GMST algorithm to decrypt the response:
+
+```javascript
+// Step 1: Implement GMST Key Derivation (must match server implementation)
+function getJulianDate() {
+  const now = new Date();
+  const utcMillis = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    now.getUTCHours(),
+    now.getUTCMinutes(),
+    now.getUTCSeconds(),
+    now.getUTCMilliseconds()
+  );
+  return utcMillis / 86400000 + 2440587.5;
+}
+
+function getGMST(jd) {
+  const T = (jd - 2451545.0) / 36525;
+  const theta0 = 280.46061837
+              + 360.98564736629 * (jd - 2451545.0)
+              + 0.000387933 * T * T
+              - (T * T * T) / 38710000.0;
+  
+  return ((theta0 % 360) + 360) % 360;
+}
+
+function getGMSTKey() {
+  const jd = getJulianDate();
+  const gmst = getGMST(jd);
   const gmstMinutes = Math.round((gmst * 60 / 15) / 2) * 2;
   return gmstMinutes.toString();
 }
 
-// Encrypt sign-in response
-const control = getGMSTKey();
+// Step 2: Derive decryption key (must use same secret as server)
+const control = getGMSTKey(); // Earth position in current minute
 const tempKey = await sha256_hash('cantguessthis' + control);
-const encryptedResponse = await aes_256_gcm_encrypt(response, tempKey);
+
+// Step 3: Decrypt using AES-256-GCM
+const decrypted = await aes_256_gcm_decrypt(
+  tempKey,
+  {
+    encrypted: encryptedResponse.encrypted,
+    iv: encryptedResponse.iv,
+    salt: encryptedResponse.salt,
+    authTag: encryptedResponse.authTag
+  }
+);
+
+// Step 4: Parse decrypted data (contains user and token ONLY)
+const { user, token } = JSON.parse(decrypted);
+
+// Note: There is NO 'key' field in the decrypted content
 ```
 
-**Purpose**:
-- Additional layer of encryption
-- Time-based key changes every 2 minutes
-- Client must know the algorithm to decrypt
-- Prevents simple token theft
-
-**Client Decryption**:
 ```javascript
-// Client must implement same GMST algorithm
-const control = getGMSTKey();
-const key = await sha256_hash('cantguessthis' + control);
-const decrypted = await aes_256_gcm_decrypt(encryptedResponse, key);
-const { user, token } = JSON.parse(decrypted);
+async function aes_256_gcm_decrypt(encrypted, password, ivHex, saltHex, authTagHex) {
+  const algorithm = 'aes-256-gcm';
+  const iv = Buffer.from(ivHex, 'hex');
+  const salt = Buffer.from(saltHex, 'hex');
+  const authTag = Buffer.from(authTagHex, 'hex');
+  
+  // Derive key from password and salt
+  const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+  
+  // Create decipher
+  const decipher = crypto.createDecipheriv(algorithm, key, iv);
+  decipher.setAuthTag(authTag);
+  
+  // Decrypt
+  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  
+  return decrypted;
+}
+```
+
+#### Security Features
+
+**Why GMST-Based Encryption?**
+- **Time-based security**: Encryption key changes every 2 minutes based on astronomical time
+- **Additional layer**: Even if JWT is intercepted, encrypted response requires GMST algorithm
+- **Client authentication**: Only clients implementing the correct algorithm can decrypt
+- **Prevents replay attacks**: Time-based keys make captured responses expire quickly
+
+**Security Properties**:
+- AES-256-GCM provides authenticated encryption
+- Authentication tag (`authTag`) prevents tampering
+- Unique IV per encryption prevents pattern analysis
+- Salt adds randomness to key derivation
+- PBKDF2 with 100,000 iterations strengthens key derivation
 ```
 
 ---

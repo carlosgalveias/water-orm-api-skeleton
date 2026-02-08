@@ -52,21 +52,30 @@ Authenticate a user and receive a JWT token.
 | `addDevice` | boolean | No | If true, add device to permitted devices after code validation |
 
 **Success Response** (200):
+
+The response is an **encrypted object** using AES-256-GCM encryption:
+
 ```json
 {
-  "status": 200,
-  "result": {
-    "data": {
-      "encrypted": "hex-encoded-encrypted-data",
-      "iv": "hex-encoded-iv",
-      "salt": "hex-encoded-salt",
-      "authTag": "hex-encoded-auth-tag"
-    }
-  }
+  "encrypted": "a1b2c3d4e5f6...hex-encoded-encrypted-data",
+  "iv": "1234567890abcdef...hex-encoded-initialization-vector",
+  "salt": "fedcba0987654321...hex-encoded-salt",
+  "authTag": "9876543210fedcba...hex-encoded-authentication-tag"
 }
 ```
 
-The encrypted data contains:
+**Response Fields**:
+| Field | Type | Description |
+|-------|------|-------------|
+| `encrypted` | string | AES-256-GCM encrypted data (hex-encoded) |
+| `iv` | string | Initialization vector for decryption (hex-encoded) |
+| `salt` | string | Salt value used in encryption (hex-encoded) |
+| `authTag` | string | Authentication tag for GCM mode verification (hex-encoded) |
+
+**Decrypted Content Structure**:
+
+After decrypting the response using AES-256-GCM, the content contains:
+
 ```json
 {
   "user": {
@@ -79,10 +88,17 @@ The encrypted data contains:
     "createdAt": "2024-01-01T00:00:00.000Z",
     "updatedAt": "2024-01-01T00:00:00.000Z"
   },
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "key": "encryption-key-for-decryption"
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 }
 ```
+
+**Decrypted Fields**:
+| Field | Type | Description |
+|-------|------|-------------|
+| `user` | object | User object with sensitive fields removed |
+| `token` | string | JWT token for authenticating subsequent requests |
+
+**CRITICAL - GMST-Based Encryption**: The response is encrypted using AES-256-GCM with a time-based key derived from Greenwich Mean Sidereal Time (GMST). The encryption key is **NOT included in the response**. Instead, clients must derive the same key using the `GMSTKey()` algorithm to decrypt the response. The key derivation formula is: `SHA256('cantguessthis' + GMSTKey())`. This creates a 2-minute time window for valid decryption and prevents man-in-the-middle attacks. See the [Response Encryption](#response-encryption) section in [`AUTHENTICATION.md`](AUTHENTICATION.md) for complete implementation details.
 
 **Error Responses**:
 
@@ -874,18 +890,53 @@ curl -X POST http://localhost:3000/letmein/signin \
   }'
 ```
 
-2. **Decrypt Response** (use the key returned):
+**Response**:
+```json
+{
+  "encrypted": "a1b2c3d4e5f6...",
+  "iv": "1234567890abcdef...",
+  "salt": "fedcba0987654321...",
+  "authTag": "9876543210fedcba..."
+}
+```
+
+2. **Decrypt Response** (client-side):
 ```javascript
-const decrypted = await aes_256_gcm_decrypt(key, encryptedData);
-const { user, token } = decrypted;
+// Step 1: Calculate GMST-based key (earth position in current minute)
+const control = getGMSTKey(); // Implement GMST algorithm from util-encryption.js
+const tempKey = await sha256_hash('cantguessthis' + control);
+
+// Step 2: Decrypt using AES-256-GCM
+const decrypted = await aes_256_gcm_decrypt(
+  tempKey,
+  {
+    encrypted: response.encrypted,
+    iv: response.iv,
+    salt: response.salt,
+    authTag: response.authTag
+  }
+);
+
+// Step 3: Parse decrypted content (contains user and token only)
+const { user, token } = JSON.parse(decrypted);
 ```
 
 3. **Use Token for Requests**:
 ```bash
 curl -X GET http://localhost:3000/generic/users \
-  -H "x-access-token: <your-jwt-token>" \
+  -H "x-access-token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
   -H "Content-Type: application/json"
 ```
+
+**CRITICAL NOTES**:
+- The decrypted response contains **only** `user` and `token` fields (no `key` field)
+- The encryption key is **never transmitted** in the response
+- Clients must implement the `GMSTKey()` function to derive the decryption key
+- The key is time-based: `SHA256('cantguessthis' + GMSTKey())`
+- Valid decryption window is approximately 2 minutes (based on GMST 2-minute intervals)
+- This prevents man-in-the-middle attacks as the key is never sent over the network
+
+**Complete Implementation**: See [`AUTHENTICATION.md`](AUTHENTICATION.md#response-encryption) for the full GMST algorithm implementation, including `getJulianDate()`, `getGMST()`, and `getGMSTKey()` functions from [`utils/util-encryption.js`](utils/util-encryption.js:33).
 
 ### Create and Update Resource
 
