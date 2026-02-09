@@ -27,7 +27,7 @@ module.exports = function (conn) {
       full_name: { type: 'string' },
       // base 64 avatar
       avatar: { type: 'string' },
-      roles: {
+      role: {
         index: true,
         model: 'roles'
       },

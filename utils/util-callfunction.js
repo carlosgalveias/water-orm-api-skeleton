@@ -2,6 +2,8 @@
 const sys = require('./util-system');
 const storageDB = require('../controllers/storage-db.js');
 const constants = require('../config/constants.js');
+const path = require('path')
+const fns = []
 
 const localRequest = async function (name, args, nonBlocking) {
     if (!name) {
