@@ -1,6 +1,6 @@
 {
   "name": "worm_api",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "",
   "license": "UNLICENSED",
   "author": "Carlos Galveias",
@@ -35,6 +35,7 @@
     "underscore": "1.13.8",
     "lodash": "4.18.0",
     "path-to-regexp": "8.4.0",
-    "qs": "6.14.2"
-  }
+    "qs": "6.15.2"
+  },
+  "devDependencies": {}
 }
